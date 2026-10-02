@@ -415,10 +415,11 @@ public abstract class BaseServer : IServer
 			client.TraceNetworkData(pBuf, "Delta Finish");
 
 	}
+
+	private readonly byte[] tempEntsBuffer = new byte[Protocol.MAX_PAYLOAD];
 	public virtual void WriteTempEntities(BaseClient client, FrameSnapshot to, FrameSnapshot from, bf_write pBuf, int nMaxEnts) {
-		byte[] data = new byte[Protocol.MAX_PAYLOAD];
 		SVC_TempEntities msg = new();
-		msg.DataOut.StartWriting(data, data.Length);
+		msg.DataOut.StartWriting(tempEntsBuffer, tempEntsBuffer.Length);
 		bf_write buffer = msg.DataOut;
 
 		FrameSnapshot? pSnapshot;
@@ -698,7 +699,7 @@ public abstract class BaseServer : IServer
 		else
 			SignonBuffer.EnsureCapacity(16384);
 
-		Signon.StartWriting(SignonBuffer.Base(), SignonBuffer.Count(), 0);
+		Signon.StartWriting(SignonBuffer.Base(), (nuint)SignonBuffer.Count(), 0);
 		Signon.DebugName = "m_Signon";
 
 		ServerClasses = 0;
@@ -1247,7 +1248,7 @@ public abstract class BaseServer : IServer
 			return Protocol.PROTOCOL_HASHEDCDKEY;
 		else
 #endif
-		return Protocol.PROTOCOL_STEAM;
+			return Protocol.PROTOCOL_STEAM;
 	}
 
 	protected virtual bool CheckProtocol(NetAddress adr, int nProtocol, int clientChallenge) {

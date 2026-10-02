@@ -1,4 +1,4 @@
-using System.Numerics;
+﻿using System.Numerics;
 using System.Runtime.CompilerServices;
 
 namespace Source.Common.MaterialSystem;
@@ -253,6 +253,10 @@ public unsafe struct VertexBuilder
 			memcpy(pUserData, src, sizeof(float) * userDataSize);
 	}
 
+	public void UserData(in Vector4 data) {
+		*(Vector4*)OffsetFloatPointer(Desc.UserData, CurrentVertex, Desc.UserDataSize) = data;
+	}
+
 	public void Color3f(float r, float g, float b) {
 		byte* pDst = CurrColor;
 		*pDst++ = (byte)Math.Clamp(r * 255, 0, 255);
@@ -336,6 +340,22 @@ public unsafe struct VertexBuilder
 			*pTangentT++ = *tp++;
 			*pTangentT = *tp;
 		}
+	}
+
+	internal void TexCoord1f(int stage, float s) {
+		float* pDst = stage switch {
+			0 => CurrTexCoord0,
+			1 => CurrTexCoord1,
+			2 => CurrTexCoord2,
+			3 => CurrTexCoord3,
+			4 => CurrTexCoord4,
+			5 => CurrTexCoord5,
+			6 => CurrTexCoord6,
+			7 => CurrTexCoord7,
+			_ => null
+		};
+		if (pDst == null) return;
+		*pDst = s;
 	}
 
 	internal void TexCoord2f(int stage, float s, float t) {
@@ -645,6 +665,18 @@ public struct IndexBuilder
 		AdvanceIndices(3);
 	}
 
+	public unsafe void FastPolygon(int startVert, int triangleCount) {
+		ushort* index = &Desc.Indices[CurrentIndex];
+		startVert += IndexOffset;
+		triangleCount *= (int)Desc.IndexSize;
+		for (int v = 0; v < triangleCount; ++v) {
+			*index++ = (ushort)startVert;
+			*index++ = (ushort)(startVert + v + 1);
+			*index++ = (ushort)(startVert + v + 2);
+		}
+		AdvanceIndices(triangleCount * 3);
+	}
+
 	public unsafe void FastQuad(int startVert) {
 		startVert += IndexOffset;
 		Desc.Indices[CurrentIndex + 0] = (ushort)startVert;
@@ -839,11 +871,13 @@ public unsafe struct MeshBuilder : IDisposable
 	public ReadOnlySpan<ushort> Index() => throw new NotImplementedException();
 
 	// position setting
-	public void Position3f(float x, float y, float z) => VertexBuilder.Position3f(x, y, z);
+	public void Position3f(float x, float y, float z) {
+		float* pDst = VertexBuilder.CurrPosition;
+		pDst[0] = x; pDst[1] = y; pDst[2] = z;
+	}
 	public void Position3fv(ReadOnlySpan<float> v) => VertexBuilder.Position3fv(v);
 	public void Position3fv(in Vector3 vec) {
-		fixed (Vector3* ptr = &vec)
-			VertexBuilder.Position3fv(new(ptr, 3));
+		*(Vector3*)VertexBuilder.CurrPosition = vec;
 	}
 
 	// normal setting
@@ -862,16 +896,21 @@ public unsafe struct MeshBuilder : IDisposable
 	public void Color4fv(ReadOnlySpan<float> rgba) => VertexBuilder.Color4fv(rgba);
 
 	// Faster versions of color
-	public void Color3ub(byte r, byte g, byte b) => VertexBuilder.Color3ubv([r, g, b]);
-	public void Color3ubv(in Color rgb) {
-		fixed (Color* ptr = &rgb)
-			VertexBuilder.Color3ubv(new(ptr, 3));
+	public void Color3ub(byte r, byte g, byte b) {
+		byte* pDst = VertexBuilder.CurrColor;
+		pDst[0] = r; pDst[1] = g; pDst[2] = b;
 	}
-	public void Color4ub(byte r, byte g, byte b, byte a) => VertexBuilder.Color4ubv([r, g, b, a]);
+	public void Color3ubv(in Color rgb) {
+		byte* pDst = VertexBuilder.CurrColor;
+		pDst[0] = rgb.R; pDst[1] = rgb.G; pDst[2] = rgb.B;
+	}
+	public void Color4ub(byte r, byte g, byte b, byte a) {
+		byte* pDst = VertexBuilder.CurrColor;
+		pDst[0] = r; pDst[1] = g; pDst[2] = b; pDst[3] = a;
+	}
 	public unsafe void Color4ubv(ReadOnlySpan<byte> rgba) => VertexBuilder.Color4ubv(rgba);
 	public unsafe void Color4ubv(in Color rgba) {
-		fixed (Color* ptr = &rgba)
-			VertexBuilder.Color4ubv(new(ptr, 4));
+		*(Color*)VertexBuilder.CurrColor = rgba;
 	}
 
 	// specular color setting
@@ -887,7 +926,7 @@ public unsafe struct MeshBuilder : IDisposable
 	public void Specular4ubv(ReadOnlySpan<byte> c) => throw new NotImplementedException();
 
 	// texture coordinate setting
-	public void TexCoord1f(int stage, float s) => throw new NotImplementedException();
+	public void TexCoord1f(int stage, float s) => VertexBuilder.TexCoord1f(stage, s);
 	public void TexCoord2f(int stage, float s, float t) => VertexBuilder.TexCoord2f(stage, s, t);
 	public void TexCoord2fv(int stage, ReadOnlySpan<float> st) => VertexBuilder.TexCoord2f(stage, st[0], st[1]);
 	public void TexCoord2fv(int stage, in Vector2 vec) => VertexBuilder.TexCoord2f(stage, vec.X, vec.Y);
@@ -921,14 +960,14 @@ public unsafe struct MeshBuilder : IDisposable
 	// Generic per-vertex data
 	public void UserData(ReadOnlySpan<float> pData) => VertexBuilder.UserData(pData);
 	public void UserData(in Vector4 vec) {
-		fixed (Vector4* ptr = &vec)
-			VertexBuilder.UserData(new((float*)ptr, 4));
+		VertexBuilder.UserData(in vec);
 	}
 
 	// Used to define the indices (only used if you aren't using primitives)
 	public void Index(ushort index) => IndexBuilder.Index(index);
 
 	public void FastIndex(ushort index) => IndexBuilder.FastIndex(index);
+	public void FastPolygon(int startVert, int triangleCount) => IndexBuilder.FastPolygon(startVert, triangleCount);
 	public void FastTriangle(int startVert) => IndexBuilder.FastTriangle(startVert);
 
 

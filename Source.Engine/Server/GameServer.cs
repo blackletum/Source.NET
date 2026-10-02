@@ -30,6 +30,8 @@ public class GameServer : BaseServer
 	protected readonly ICommandLine CommandLine = Singleton<ICommandLine>();
 	public readonly FrameSnapshotManager FrameSnapshotManager = Singleton<FrameSnapshotManager>();
 
+	PureServerWhitelist? PureServerWhitelist;
+
 	public override void SetMaxClients(int number) {
 		MaxClients = Math.Clamp(number, 1, MaxClientsLimit);
 		Host.deathmatch.SetValue(MaxClients > 1);
@@ -41,6 +43,8 @@ public class GameServer : BaseServer
 		FullSendTables.DebugName = "FullSendTables";
 		DLLInitialized = false;
 	}
+
+	public bool IsInPureServerMode() => PureServerWhitelist != null;
 
 	public override void Shutdown() {
 		g_DownloadListGenerator.OnLevelLoadEnd();
@@ -720,16 +724,14 @@ public class GameServer : BaseServer
 		ServerClasses = nClasses;
 		ServerClassBits = (int)(Math.Log2(ServerClasses) + 1);
 
-		// TODO: When our server classes match up, we can make it assign class ID's. For now,
-		// we'll use what the Garry's Mod bindings give us...
-#if false
+		bool spew = CommandLine.FindParm("-netspike") != 0;
 		int curID = 0;
-		for (ServerClass c = classes; c != null; c = c.Next) {
+		for (ServerClass? c = classes; c != null; c = c.Next) {
 			c.ClassID = curID++;
 
-			// Msg($"{c.ClassID} == '{c.NetworkName}'\n");
+			if (spew)
+				Msg($"{c.ClassID} == '{c.NetworkName}'\n");
 		}
-#endif
 	}
 
 	INetworkStringTable? ModelPrecacheTable;

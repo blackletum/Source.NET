@@ -170,7 +170,7 @@ public static class SendPropHelpers
 	}
 
 	private static SendProp SendPropVariableLengthArray(DynamicArrayAccessor accessor) {
-		return InternalSendPropArray(accessor.Length, accessor.Name, null);
+		return InternalSendPropArray(accessor.Length, accessor.NetworkName, null);
 	}
 
 	/// <summary>
@@ -202,10 +202,10 @@ public static class SendPropHelpers
 			props[i] = arrayProp.Copy();
 			props[i].FieldInfo = new DynamicArrayIndexAccessor(field, i);
 			props[i].NameOverride = ElementNames[i];
-			props[i].SetParentArrayPropName(field.Name);
+			props[i].SetParentArrayPropName(((field as DynamicAccessor)?.NetworkName ?? field.Name));
 		}
 
-		SendTable table = new SendTable(field.Name, props);
+		SendTable table = new SendTable(((field as DynamicAccessor)?.NetworkName ?? field.Name), props);
 		ret.SetDataTable(table);
 
 		return ret;
@@ -313,6 +313,8 @@ public static class SendPropHelpers
 		ret.SetFlags(flags);
 		ret.LowValue = 0.0f;
 		ret.HighValue = 360.0f;
+		if ((flags & PropFlags.RoundDown) != 0)
+			ret.HighValue = ret.HighValue - ((ret.HighValue - ret.LowValue) / (1 << bits));
 		ret.HighLowMul = AssignRangeMultiplier(ret.Bits, ret.HighValue - ret.LowValue);
 		ret.SetProxyFn(proxyFn);
 
@@ -331,6 +333,8 @@ public static class SendPropHelpers
 		ret.SetFlags(flags);
 		ret.LowValue = 0.0f;
 		ret.HighValue = 360.0f;
+		if ((flags & PropFlags.RoundDown) != 0)
+			ret.HighValue = ret.HighValue - ((ret.HighValue - ret.LowValue) / (1 << bits));
 		ret.HighLowMul = AssignRangeMultiplier(ret.Bits, ret.HighValue - ret.LowValue);
 		ret.SetProxyFn(proxyFn);
 
@@ -429,6 +433,23 @@ public static class SendPropHelpers
 
 		return ret;
 	}
+	public static SendProp SendPropDataTable(string name, int offset, SendTable sendTable, SendTableProxyFn? proxyFn = null) {
+		SendProp ret = new();
+		proxyFn ??= SendProxy_DataTableToDataTable;
+
+		ret.Type = SendPropType.DataTable;
+		ret.NameOverride = name;
+		ret.SetDataTable(sendTable);
+		ret.SetDataTableProxyFn(proxyFn);
+
+		if (proxyFn == SendProxy_DataTableToDataTable)
+			ret.SetFlags(PropFlags.ProxyAlwaysYes);
+
+		if (proxyFn == SendProxy_DataTableToDataTable && offset == 0)
+			ret.SetFlags(PropFlags.Collapsible);
+
+		return ret;
+	}
 	delegate void EnsureCapacityBasicFn(int length);
 	public static SendProp SendPropList(IFieldAccessor field, int maxElements, SendProp arrayProp, SendTableProxyFn? proxyFn = null) {
 		proxyFn ??= SendProxy_DataTableToDataTable;
@@ -459,7 +480,7 @@ public static class SendPropHelpers
 		SendProp lengthProp = SendPropInt($"lengthprop{maxElements}", DtCommon.NumBitsForCount(maxElements), PropFlags.Unsigned, SendProxy_UtlVectorLength);
 		lengthProp.SetExtraData(extraData);
 
-		string lengthProxyTableName = DtUtlVectorCommon.AllocateUniqueDataTableName(true, $"_LPT_{field.Name}_{maxElements}");
+		string lengthProxyTableName = DtUtlVectorCommon.AllocateUniqueDataTableName(true, $"_LPT_{((field as DynamicAccessor)?.NetworkName ?? field.Name)}_{maxElements}");
 		SendTable lengthTable = new SendTable(lengthProxyTableName, [lengthProp]);
 		props[0] = SendPropDataTable("lengthproxy", lengthTable, SendProxy_LengthTable);
 		props[0].SetExtraData(extraData);
@@ -468,7 +489,7 @@ public static class SendPropHelpers
 			props[i] = arrayProp.Copy();
 			props[i].SetOffset(0);
 			props[i].NameOverride = ElementNames[i - 1];
-			props[i].ParentArrayPropName = field.Name;
+			props[i].ParentArrayPropName = ((field as DynamicAccessor)?.NetworkName ?? field.Name);
 			props[i].SetExtraData(extraData);
 
 			if (arrayProp.Type == SendPropType.DataTable) {
@@ -481,7 +502,7 @@ public static class SendPropHelpers
 			}
 		}
 
-		SendTable table = new SendTable(DtUtlVectorCommon.AllocateUniqueDataTableName(true, $"_ST_{field.Name}_{maxElements}"), props);
+		SendTable table = new SendTable(DtUtlVectorCommon.AllocateUniqueDataTableName(true, $"_ST_{((field as DynamicAccessor)?.NetworkName ?? field.Name)}_{maxElements}"), props);
 		ret.SetDataTable(table);
 		return ret;
 	}
@@ -596,10 +617,6 @@ public class SendProp : IDataTableProp
 
 	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	public T GetValue<T>(object instance) {
-#if DEBUG
-		ErrorIfNot(FieldInfo != null, $"SendProp.GetValue: FieldInfo is null for prop {GetName()}");
-		// Msg($"SendProp.GetValue for Field '{GetName()}' - '{FieldInfo.Name}' - '{FieldInfo.DeclaringType}' ({Type})\n");
-#endif
 		return FieldInfo.GetValue<T>(instance);
 	}
 	[MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -621,7 +638,7 @@ public class SendProp : IDataTableProp
 
 	public PropFlags GetFlags() => Flags;
 
-	public ReadOnlySpan<char> GetName() => NameOverride ?? FieldInfo?.Name ?? "<??UNNAMED??>";
+	public ReadOnlySpan<char> GetName() => NameOverride ?? (FieldInfo as DynamicAccessor)?.NetworkName ?? FieldInfo?.Name ?? "<??UNNAMED??>";
 
 	public int GetNumElements() => Elements;
 
@@ -919,7 +936,7 @@ public class SendTable : IDataTableBase<SendProp>
 		HasPropsEncodedAgainstCurrentTickCount = state;
 	}
 
-	public static void WriteInfos(SendTable table, ref bf_write dataOut) {
+	public static void WriteInfos(SendTable table, bf_write dataOut) {
 		throw new NotImplementedException();
 	}
 

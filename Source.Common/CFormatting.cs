@@ -529,9 +529,15 @@ public static class CFormatting
 
 	public static int strcmp(scoped ReadOnlySpan<char> a, scoped ReadOnlySpan<char> b) => a.SliceNullTerminatedString().CompareTo(b.SliceNullTerminatedString(), StringComparison.Ordinal);
 	public static int strncmp(scoped ReadOnlySpan<char> a, scoped ReadOnlySpan<char> b, int c) => a.SliceNullTerminatedString().SliceSafe(c).CompareTo(b.SliceNullTerminatedString().SliceSafe(c), StringComparison.Ordinal);
-	public static int strnicmp(scoped ReadOnlySpan<char> a, scoped ReadOnlySpan<char> b, int c) => a.SliceNullTerminatedString().SliceSafe(c).CompareTo(b.SliceNullTerminatedString().SliceSafe(c), StringComparison.OrdinalIgnoreCase);
-	public static int stricmp(scoped ReadOnlySpan<char> a, scoped ReadOnlySpan<char> b) => a.SliceNullTerminatedString().CompareTo(b.SliceNullTerminatedString(), StringComparison.OrdinalIgnoreCase);
-	public static int strcmpi(scoped ReadOnlySpan<char> a, scoped ReadOnlySpan<char> b) => a.SliceNullTerminatedString().CompareTo(b.SliceNullTerminatedString(), StringComparison.OrdinalIgnoreCase);
+	public static int strnicmp(scoped ReadOnlySpan<char> a, scoped ReadOnlySpan<char> b, int c) => stricmp(a.SliceNullTerminatedString().SliceSafe(c), b.SliceNullTerminatedString().SliceSafe(c));
+	public static int stricmp(scoped ReadOnlySpan<char> a, scoped ReadOnlySpan<char> b) {
+		a = a.SliceNullTerminatedString(); b = b.SliceNullTerminatedString();
+		for (int i = 0; i < a.Length && i < b.Length; i++)
+			if (char.ToLowerInvariant(a[i]) != char.ToLowerInvariant(b[i]))
+				return char.ToLowerInvariant(a[i]) - char.ToLowerInvariant(b[i]);
+		return a.Length - b.Length;
+	}
+	public static int strcmpi(scoped ReadOnlySpan<char> a, scoped ReadOnlySpan<char> b) => stricmp(a, b);
 
 
 	public static bool streq(scoped ReadOnlySpan<char> a, scoped ReadOnlySpan<char> b) => a.SliceNullTerminatedString().Equals(b.SliceNullTerminatedString(), StringComparison.Ordinal);
@@ -718,4 +724,8 @@ public static class CFormatting
 		return originalSize - target.Length; // Should return the delta length
 	}
 	public static PrintF sprintf(Span<char> target, ReadOnlySpan<char> format) => new(target, format);
+	public static void binarytohex(ReadOnlySpan<byte> input, Span<char> output) {
+		for (int i = 0; i < input.Length; i++) input[i].TryFormat(output[(i * 2)..], out _, "x2");
+		output[input.Length * 2] = '\0';
+	}
 }

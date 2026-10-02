@@ -1,4 +1,4 @@
-using CommunityToolkit.HighPerformance;
+﻿using CommunityToolkit.HighPerformance;
 
 using Source.Common;
 using Source.Common.Commands;
@@ -110,7 +110,43 @@ public class DispInfo : DispUtilsHelper, IDispInfo
 	public void AddDynamicLights(DLight[] lights, uint lightMask) => throw new NotImplementedException();
 	public uint ComputeDynamicLightMask(DLight[] lights) => throw new NotImplementedException();
 
-	// public DispDecalHandle NotifyAddDecal(Decal decal, float flSize) => throw new NotImplementedException();
+	public DispDecalHandle NotifyAddDecal(WorldDecalHandle_t decal, float size) {
+		DispDecalHandle h = unchecked((DispDecalHandle)s_DispDecals.Alloc());
+		if (h != DISP_DECAL_HANDLE_INVALID) {
+			int decalCount = 0;
+			DispDecalHandle iDecal = FirstDecal;
+			DispDecalHandle lastDecal = DISP_DECAL_HANDLE_INVALID;
+			while (iDecal != DISP_DECAL_HANDLE_INVALID) {
+				lastDecal = iDecal;
+				iDecal = unchecked((DispDecalHandle)s_DispDecals.Next(iDecal));
+				++decalCount;
+			}
+
+#if !SWDS
+			if (decalCount >= MAX_DISP_DECALS)
+				Engine.Render.DecalUnlink(s_DispDecals[lastDecal].Decal, host_state.WorldBrush);
+#endif
+
+			s_DispDecals.LinkBefore(FirstDecal, h);
+			FirstDecal = h;
+
+			ref DispDecal dispDecal = ref s_DispDecals[h];
+			dispDecal.Decal = Engine.Render.s_DecalPool[decal];
+			dispDecal.FirstFragment = DISP_DECAL_FRAGMENT_HANDLE_INVALID;
+			dispDecal.Base.NVerts = 0;
+			dispDecal.Base.NTris = 0;
+			dispDecal.Size = size;
+
+			Span<DecalVert> outVerts = default;
+			Engine.Render.SetupDecalClip(outVerts, dispDecal.Decal!, ref ModelLoader.MSurf_Plane(ref ParentSurfID).Normal, dispDecal.Decal!.Material!, dispDecal.TextureSpaceBasis, dispDecal.DecalWorldScale);
+
+			SetupDecalNodeIntersect(PowerInfo!.RootNode, 0, ref dispDecal, 0);
+		}
+
+		return h;
+	}
+
+	public void SetupDecalNodeIntersect(VertIndex nodeIndex, int nodeBitIndex, ref DispDecal dispDecal, int level) => throw new NotImplementedException();
 	public void NotifyRemoveDecal(DispDecalHandle h) => throw new NotImplementedException();
 	public DispShadowHandle AddShadowDecal(ShadowHandle_t shadowHandle) {
 		DispShadowHandle h = unchecked((DispShadowHandle)s_DispShadowDecals.Alloc());
@@ -164,7 +200,7 @@ public class DispInfo : DispUtilsHelper, IDispInfo
 		if (allowDebugModes) {
 			using MatRenderContextPtr renderContext = new(materials);
 
-			if (GLCvars.ShouldDrawInWireFrameMode()) {
+			if (ShouldDrawInWireFrameMode()) {
 				renderContext.Bind(MatSys.MaterialWireframe!, null);
 				SpecifyDynamicMesh();
 				normalRender = false;
@@ -438,11 +474,12 @@ public class DispInfo : DispUtilsHelper, IDispInfo
 	}
 
 	public static readonly ConVar r_DrawDisp = new("r_DrawDisp", "1", FCvar.Cheat, "Toggles rendering of displacment maps");
+	static InlineArrayMaxMapDispInfo<DispInfo> s_visibleDisps;
 	public static void DispInfo_RenderList(int sortGroup, Span<SurfaceHandle_t> list, int listCount, bool ortho, uint flags, RenderDepthMode depthMode) {
 		if (r_DrawDisp.GetInt() == 0 || listCount == 0)
 			return;
 
-		DispInfo[] visibleDisps = new DispInfo[BSPFileCommon.MAX_MAP_DISPINFO];
+		Span<DispInfo?> visibleDisps = s_visibleDisps;
 
 		DispInfo_BuildPrimLists(sortGroup, list, listCount, depthMode != RenderDepthMode.Normal, visibleDisps, out int visibleDispCount);
 
@@ -480,7 +517,7 @@ public class DispInfo : DispUtilsHelper, IDispInfo
 	}
 
 	static bool DispInfoRenderDebugModes() {
-		if (GLCvars.ShouldDrawInWireFrameMode() || mat_luxels.GetInt() != 0
+		if (ShouldDrawInWireFrameMode() || mat_luxels.GetInt() != 0
 			// || r_DispWalkable.GetInt() || r_DispBuildable.GetInt() || mat_surfaceid.GetInt() || mat_surfacemat.GetInt() // todo
 			)
 			return true;
@@ -488,7 +525,7 @@ public class DispInfo : DispUtilsHelper, IDispInfo
 		return false;
 	}
 
-	static void DispInfo_BuildPrimLists(int sortGroup, Span<SurfaceHandle_t> list, int listCount, bool depthOnly, DispInfo[] visibleDisps, out int visibleDispCount) {
+	static void DispInfo_BuildPrimLists(int sortGroup, Span<SurfaceHandle_t> list, int listCount, bool depthOnly, Span<DispInfo?> visibleDisps, out int visibleDispCount) {
 		visibleDispCount = 0;
 		bool debugConvars = !depthOnly ? DispInfoRenderDebugModes() : false;
 		for (int i = 0; i < listCount; i++) {
@@ -642,8 +679,8 @@ public class DispInfo : DispUtilsHelper, IDispInfo
 #endif
 	}
 
-	static void DispInfo_BatchDecals(DispInfo[] visibleDisps, int visibleDispCount) => throw new NotImplementedException();
-	static void DispInfo_DrawDecals(DispInfo[] visibleDisps, int visibleDispCount) => throw new NotImplementedException();
+	static void DispInfo_BatchDecals(ReadOnlySpan<DispInfo?> visibleDisps, int visibleDispCount) => throw new NotImplementedException();
+	static void DispInfo_DrawDecals(ReadOnlySpan<DispInfo?> visibleDisps, int visibleDispCount) => throw new NotImplementedException();
 	static void DispInfo_DrawDebugInformation(Span<SurfaceHandle_t> list, int listCount) {
 		// => throw new NotImplementedException();
 	}

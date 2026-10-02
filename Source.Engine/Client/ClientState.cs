@@ -1,7 +1,6 @@
 using CommunityToolkit.HighPerformance;
 
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Win32;
 
 using Source.Common;
 using Source.Common.Audio;
@@ -13,6 +12,7 @@ using Source.Common.Filesystem;
 using Source.Common.Formats.Keyvalues;
 using Source.Common.Hashing;
 using Source.Common.Mathematics;
+using Source.Common.MaterialSystem;
 using Source.Common.Networking;
 using Source.Common.Server;
 using Source.Engine.Server;
@@ -249,6 +249,7 @@ IModelLoader modelloader, ICommandLine commandLine,
 				return true;
 			case PrecacheItem.DECAL_PRECACHE_TABLENAME:
 				DecalPrecacheTable = table;
+				table.SetStringChangedCallback(null, Callback_DecalChanged);
 				return true;
 			case Protocol.INSTANCE_BASELINE_TABLENAME:
 				InstanceBaselineTable = table;
@@ -284,7 +285,7 @@ IModelLoader modelloader, ICommandLine commandLine,
 		}
 
 		Sound.StopAllSounds(true);
-		R.DecalTermAll();
+		Render.DecalTermAll();
 
 		if (MaxClients > 1)
 			if (EngineVGui!.IsConsoleVisible() == false)
@@ -332,6 +333,36 @@ IModelLoader modelloader, ICommandLine commandLine,
 	protected override bool ProcessGameEventList(SVC_GameEventList msg) {
 		return gameEventManager.ParseEventList(msg);
 	}
+	protected override bool ProcessBSPDecal(SVC_BSPDecal msg) {
+		Model? model;
+
+		if (msg.EntityIndex != 0)
+			model = GetModel(msg.ModelIndex);
+		else {
+			model = host_state.WorldModel;
+			if (model == null)
+				Warning("ProcessBSPDecal:  Trying to project on world before host_state.worldmodel is set!!!\n");
+		}
+
+		if (model == null) {
+			IMaterial? mat = Render.Draw_DecalMaterial(msg.DecalTextureIndex);
+			ReadOnlySpan<char> matname = "???";
+			if (mat != null)
+				matname = mat.GetName();
+
+			Warning($"Warning! Static BSP decal ({matname}), on NULL model index {msg.ModelIndex} for entity index {msg.EntityIndex}.\n");
+			return true;
+		}
+
+		if (r_decals.GetInt() != 0)
+			effects.DecalShoot(msg.DecalTextureIndex, msg.EntityIndex, model, in vec3_origin, in vec3_angle, in msg.Pos, null, msg.LowPriority ? 0 : (int)FDecal.Permanent);
+
+		// ReadOnlySpan<char> decalName = DecalPrecacheTable!.GetString(msg.DecalTextureIndex);
+		// DevMsg($"Process decal {msg.Pos}, {decalName}, {msg.EntityIndex}, {model}\n");
+
+		return true;
+	}
+
 	protected override bool ProcessGameEvent(SVC_GameEvent msg) {
 		int startbit = msg.DataIn.BitsRead;
 
@@ -575,7 +606,7 @@ IModelLoader modelloader, ICommandLine commandLine,
 	protected override bool ProcessGMod_ServerToClient(SVC_GMod_ServerToClient msg) {
 		switch (msg.MessageType) {
 			case GModMessageType.RequestLuaFiles: {
-					g_ClientDLL!.GMod_RequestLuaFiles(NetChannel!);
+					g_ClientDLL!.GMOD_RequestLuaFiles(NetChannel!);
 				}
 				return true;
 			case GModMessageType.LuaFile: {
@@ -585,7 +616,7 @@ IModelLoader modelloader, ICommandLine commandLine,
 					// luaFileData.Position = 0;
 					// luaFileData.SetLength(0);
 					// Bootil.Compression.LZMA.Extract(msg.LuaFile.FileContents.Span, luaFileData);
-					g_ClientDLL!.GMod_ReceiveLuaFile(ClientLuaFiles.GetString(msg.LuaFile.FileStringTableEntryID), in msg.LuaFile.FileSHA256, msg.LuaFile.FileContents.Span);
+					g_ClientDLL!.GMOD_ReceiveLuaFile(ClientLuaFiles.GetString(msg.LuaFile.FileStringTableEntryID), in msg.LuaFile.FileSHA256, msg.LuaFile.FileContents.Span);
 
 				}
 				return true;
@@ -702,21 +733,21 @@ IModelLoader modelloader, ICommandLine commandLine,
 		}
 	}
 	protected override bool ProcessVoiceInit(SVC_VoiceInit msg) {
-		if (string.IsNullOrEmpty(msg.VoiceCodec) || msg.VoiceCodec[0] == '\0') 
+		if (string.IsNullOrEmpty(msg.VoiceCodec) || msg.VoiceCodec[0] == '\0')
 			Voice.Deinit();
-		else 
+		else
 			Voice.Init(msg.VoiceCodec, msg.SampleRate);
-		
+
 		return true;
 	}
-	static readonly ConVar cl_voice_filter = new( "cl_voice_filter", "", 0, "Filter voice by name substring" ); // filter incoming voice data
+	static readonly ConVar cl_voice_filter = new("cl_voice_filter", "", 0, "Filter voice by name substring"); // filter incoming voice data
 
 	protected override bool ProcessVoiceData(SVC_VoiceData msg) {
 		Span<byte> received = stackalloc byte[4096];
 		int bitsRead = (int)msg.DataIn.ReadBitsClamped(received, (uint)msg.Length);
 
 		int entity = msg.FromClient + 1;
-		if (entity == (PlayerSlot + 1)) 
+		if (entity == (PlayerSlot + 1))
 			Voice.LocalPlayerTalkingAck();
 
 		engineClient.GetPlayerInfo(entity, out PlayerInfo playerinfo);
@@ -727,7 +758,7 @@ IModelLoader modelloader, ICommandLine commandLine,
 		if (bitsRead == 0)
 			return true;
 
-		if (!Voice.Enabled()) 
+		if (!Voice.Enabled())
 			return true;
 
 		int channel = Voice.GetChannel(entity);
@@ -804,11 +835,11 @@ IModelLoader modelloader, ICommandLine commandLine,
 					bool allowDownloads = true;
 					bool allowSoundDownloads = true;
 					bool allowNonMaps = true;
-					if (0 == stricmp(cl_downloadfilter.GetString(), "none")) 
+					if (0 == stricmp(cl_downloadfilter.GetString(), "none"))
 						allowDownloads = allowSoundDownloads = allowNonMaps = false;
-					else if (0 == stricmp(cl_downloadfilter.GetString(), "nosounds")) 
+					else if (0 == stricmp(cl_downloadfilter.GetString(), "nosounds"))
 						allowSoundDownloads = false;
-					else if (0 == stricmp(cl_downloadfilter.GetString(), "mapsonly")) 
+					else if (0 == stricmp(cl_downloadfilter.GetString(), "mapsonly"))
 						allowNonMaps = false;
 
 					if (allowDownloads) {
@@ -818,14 +849,14 @@ IModelLoader modelloader, ICommandLine commandLine,
 							scoped ReadOnlySpan<char> ext = Path.GetExtension(fname);
 							ext = extension[..ext.ToLowerInvariant(extension)];
 
-							if (!allowSoundDownloads) 
-								if (0 == stricmp(extension, "wav") || 0 == stricmp(extension, "mp3")) 
+							if (!allowSoundDownloads)
+								if (0 == stricmp(extension, "wav") || 0 == stricmp(extension, "mp3"))
 									continue;
 
 							if (!allowNonMaps) {
 								// The user wants maps only.
 								// If the extension is not bsp, skip it.
-								if (0 != stricmp(extension, "bsp")) 
+								if (0 != stricmp(extension, "bsp"))
 									continue;
 							}
 
@@ -874,7 +905,7 @@ IModelLoader modelloader, ICommandLine commandLine,
 	public void CheckFileCRCsWithServer() { }
 	public void SendClientInfo() {
 		CLC_ClientInfo info = new CLC_ClientInfo();
-		info.SendTableCRC = CLC.ClientInfoCRC;
+		info.SendTableCRC = (int)EngineSendTable.GetCRC();
 		info.ServerCount = ServerCount;
 		info.IsHLTV = false;
 		info.FriendsID = SteamUser.GetSteamID().m_SteamID;
@@ -905,7 +936,7 @@ IModelLoader modelloader, ICommandLine commandLine,
 
 		if (host_state.WorldModel == null) {
 			Host.Disconnect(true, $"Couldn't load map {LevelFileName}\n");
-			
+
 			return;
 		}
 
@@ -1017,6 +1048,39 @@ IModelLoader modelloader, ICommandLine commandLine,
 		p.SetModel(model);
 		return model;
 	}
+	public void Callback_DecalChanged(object? context, INetworkStringTable stringTable, int stringNumber, ReadOnlySpan<char> newString, ReadOnlySpan<byte> newData) {
+		if (stringTable == DecalPrecacheTable)
+			SetDecal(stringNumber);
+		else
+			Assert(false);
+	}
+
+	public ReadOnlySpan<char> GetDecalName(int index) {
+		if (index <= 0 || DecalPrecacheTable == null)
+			return null;
+
+		if (index >= DecalPrecacheTable.GetNumStrings())
+			return null;
+
+		PrecacheItem p = DecalPrecache[index];
+		ReadOnlySpan<char> d = p.GetDecal();
+		return d;
+	}
+
+	public void SetDecal(int tableIndex) {
+		if (DecalPrecacheTable == null)
+			return;
+
+		if (tableIndex < 0 || tableIndex >= DecalPrecacheTable.GetNumStrings())
+			return;
+
+		ReadOnlySpan<char> name = DecalPrecacheTable.GetString(tableIndex);
+		PrecacheItem p = DecalPrecache[tableIndex];
+		p.SetDecal(new(name));
+
+		Render.Draw_DecalSetName(tableIndex, name);
+	}
+
 	public void SetModel(int tableIndex) {
 		if (ModelPrecacheTable == null)
 			return;
@@ -1045,6 +1109,11 @@ IModelLoader modelloader, ICommandLine commandLine,
 			p.SetModel(modelloader.GetModelForName(name, ModelLoaderFlags.Client));
 		else
 			p.SetModel(null);
+	}
+
+	protected override bool ProcessCrosshairAngle(SVC_CrosshairAngle msg) {
+		g_ClientDLL!.SetCrosshairAngle(msg.Angle);
+		return true;
 	}
 
 	internal void ReadPacketEntities(EntityReadInfo u) {

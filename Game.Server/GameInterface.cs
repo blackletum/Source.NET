@@ -220,7 +220,6 @@ public class ServerGameDLL(IFileSystem filesystem, ICommandLine CommandLine) : I
 	}
 
 	public bool DLLInit(IServiceProvider services) {
-		StaticClassIndicesHelpers.DumpDatatablesCompleted();
 		BaseEdict.GetChangeAccessor += x => engine.GetChangeAccessor((Edict)x); // Kind of a hack, but this is defined in gameinterface.cpp like this...
 		g_SharedChangeInfo = engine.GetSharedEdictChangeInfo();
 
@@ -246,8 +245,8 @@ public class ServerGameDLL(IFileSystem filesystem, ICommandLine CommandLine) : I
 	public void GameFrame(bool simulating) {
 		if (BaseEntity.IsSimulatingOnAlternateTicks()) {
 			if ((gpGlobals.TickCount & 1) != 0) {
-				// UpdateAllClientData();
-				// return;
+				PlayerLocalData.UpdateAllClientData();
+				return;
 			}
 
 			gpGlobals.FrameTime *= 2.0f;
@@ -273,7 +272,7 @@ public class ServerGameDLL(IFileSystem filesystem, ICommandLine CommandLine) : I
 
 		ServiceEventQueue();
 
-		// UpdateAllClientData();
+		PlayerLocalData.UpdateAllClientData();
 
 		// g_pGameRules?.EndGameFrame();
 
